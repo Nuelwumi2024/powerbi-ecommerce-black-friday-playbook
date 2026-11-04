@@ -1,0 +1,20 @@
+{
+  "name": "Black Friday Playbook Theme",
+  "dataColors": ["#1F3A5F", "#2A9D8F", "#E9C46A", "#F4A261", "#E76F51", "#6B7785", "#8AB17D", "#B5838D"],
+  "background": "#FFFFFF",
+  "foreground": "#1F3A5F",
+  "tableAccent": "#2A9D8F",
+  "good": "#2A9D8F",
+  "neutral": "#E9C46A",
+  "bad": "#C0392B",
+  "textClasses": {
+    "title": { "fontFace": "Segoe UI Semibold", "fontSize": 14, "color": "#1F3A5F" },
+    "label": { "fontFace": "Segoe UI", "fontSize": 10, "color": "#6B7785" },
+    "callout": { "fontFace": "Segoe UI Semibold", "fontSize": 28, "color": "#1F3A5F" }
+  },
+  "visualStyles": {
+    "page": { "*": { "background": [{ "color": { "solid": { "color": "#F4F7FA" } } }] } },
+    "*": { "*": { "border": [{ "show": false }] } }
+  }
+}
+

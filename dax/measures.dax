@@ -1,0 +1,151 @@
+// ============================================================
+// The Black Friday Playbook - Adire Market (fictional): DAX
+//
+// Tables:   orders (fact), customers, customer_segments (from Python), marketing_spend, funnel,
+//           price_index, DateTable and Channels (calculated)
+// Relationships (one-to-many, single direction unless stated):
+//   customers[customer_id]    -> orders[customer_id]
+//   customers[customer_id]    -> customer_segments[customer_id]   (one-to-one)
+//   DateTable[Date]           -> orders[order_date]
+//   DateTable[Date]           -> marketing_spend[month]
+//   DateTable[Date]           -> funnel[month]
+//   price_index[month]        -> orders[Month]   (calculated column below)
+//   Channels[Channel]         -> customers[acquisition_channel]
+//   Channels[Channel]         -> marketing_spend[channel]
+// ============================================================
+
+// ---------- Calculated tables ----------
+DateTable =
+ADDCOLUMNS (
+    CALENDAR ( DATE ( 2024, 1, 1 ), DATE ( 2026, 10, 31 ) ),
+    "Year", YEAR ( [Date] ),
+    "Month No", MONTH ( [Date] ),
+    "Month", FORMAT ( [Date], "MMM" ),
+    "Year-Month", FORMAT ( [Date], "yyyy-MM" ),
+    "Is Jan-Oct", MONTH ( [Date] ) <= 10
+)
+
+Channels = DISTINCT ( customers[acquisition_channel] )
+
+// ---------- Calculated columns ----------
+// orders
+Month = DATE ( YEAR ( orders[order_date] ), MONTH ( orders[order_date] ), 1 )
+
+Real Revenue (Col) = DIVIDE ( orders[realised_revenue], RELATED ( price_index[price_index] ) )
+
+// customers
+Has 90d History = customers[first_order_date] <= DATE ( 2026, 10, 31 ) - 90
+
+Repeat 90d =
+COUNTROWS (
+    FILTER (
+        RELATEDTABLE ( orders ),
+        orders[order_date] > customers[first_order_date]
+            && orders[order_date] <= customers[first_order_date] + 90
+            && orders[order_status] <> "Cancelled (payment failed)"
+    )
+) > 0
+
+Contribution 12M =
+SUMX (
+    FILTER ( RELATEDTABLE ( orders ), orders[order_date] < customers[first_order_date] + 365 ),
+    orders[contribution]
+)
+
+Is Mature = customers[first_order_date] <= DATE ( 2026, 10, 31 ) - 365
+
+// ---------- Core KPIs ----------
+Orders = COUNTROWS ( orders )
+Delivered Orders = CALCULATE ( COUNTROWS ( orders ), orders[order_status] = "Delivered" )
+Active Customers = DISTINCTCOUNT ( orders[customer_id] )
+Gross Order Value = SUM ( orders[gross_value] )
+Realised Revenue = SUM ( orders[realised_revenue] )
+Real Revenue = SUMX ( orders, DIVIDE ( orders[realised_revenue], RELATED ( price_index[price_index] ) ) )
+AOV = DIVIDE ( [Realised Revenue], [Delivered Orders] )
+Contribution = SUM ( orders[contribution] )
+Contribution Margin % = DIVIDE ( [Contribution], [Realised Revenue] )
+Avg Delivery Days = AVERAGE ( orders[delivery_days] )
+Avg Discount % = AVERAGE ( orders[discount] )
+
+// ---------- Growth: nominal vs real (compare the same months) ----------
+Revenue PY = CALCULATE ( [Realised Revenue], SAMEPERIODLASTYEAR ( DateTable[Date] ) )
+Real Revenue PY = CALCULATE ( [Real Revenue], SAMEPERIODLASTYEAR ( DateTable[Date] ) )
+Revenue Growth % = DIVIDE ( [Realised Revenue] - [Revenue PY], [Revenue PY] )
+Real Growth % = DIVIDE ( [Real Revenue] - [Real Revenue PY], [Real Revenue PY] )
+Inflation Effect (pts) = [Revenue Growth %] - [Real Growth %]
+
+// ---------- Order outcomes ----------
+Failed or Refused Orders =
+CALCULATE ( COUNTROWS ( orders ), orders[order_status] IN { "Cancelled (payment failed)", "Refused at delivery" } )
+
+Failed or Refused % = DIVIDE ( [Failed or Refused Orders], [Orders] )
+
+Lost Order Value =
+CALCULATE ( SUM ( orders[gross_value] ), orders[order_status] IN { "Cancelled (payment failed)", "Refused at delivery" } )
+
+// ---------- Marketing ----------
+Spend = SUM ( marketing_spend[spend] )
+New Customers = SUM ( marketing_spend[new_customers] )
+CAC = DIVIDE ( [Spend], [New Customers] )
+
+LTV 12M = CALCULATE ( AVERAGE ( customers[Contribution 12M] ), customers[Is Mature] = TRUE )
+LTV to CAC = DIVIDE ( [LTV 12M], [CAC] )
+
+Repeat Rate 90d =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( customers ), customers[Repeat 90d] = TRUE, customers[Has 90d History] = TRUE ),
+    CALCULATE ( COUNTROWS ( customers ), customers[Has 90d History] = TRUE )
+)
+
+TikTok Share of New Customers =
+DIVIDE (
+    CALCULATE ( [New Customers], marketing_spend[channel] = "TikTok Ads" ),
+    CALCULATE ( [New Customers], ALL ( marketing_spend[channel] ) )
+)
+
+// ---------- Customers (segments come from Python: customer_segments.csv) ----------
+Segment Customers = COUNTROWS ( customer_segments )
+Segment Revenue = SUM ( customer_segments[monetary] )
+Segment Revenue Share = DIVIDE ( [Segment Revenue], CALCULATE ( [Segment Revenue], ALL ( customer_segments[segment] ) ) )
+
+Win-back Customers =
+CALCULATE ( COUNTROWS ( customer_segments ), customer_segments[segment] IN { "At risk", "Can't lose them" } )
+
+Win-back Revenue Share =
+DIVIDE (
+    CALCULATE ( SUM ( customer_segments[monetary] ), customer_segments[segment] IN { "At risk", "Can't lose them" } ),
+    CALCULATE ( SUM ( customer_segments[monetary] ), ALL ( customer_segments[segment] ) )
+)
+
+// ---------- Funnel ----------
+Sessions = SUM ( funnel[sessions] )
+Conversion Rate = DIVIDE ( SUM ( funnel[orders_placed] ), [Sessions] )
+Checkout Abandonment = 1 - DIVIDE ( SUM ( funnel[orders_placed] ), SUM ( funnel[checkout_started] ) )
+
+// ---------- Black Friday ----------
+BF Orders per Day =
+DIVIDE (
+    CALCULATE ( [Orders], orders[black_friday_window] = "Yes" ),
+    CALCULATE ( DISTINCTCOUNT ( orders[order_date] ), orders[black_friday_window] = "Yes" )
+)
+
+BF Contribution Margin % = CALCULATE ( [Contribution Margin %], orders[black_friday_window] = "Yes" )
+Normal Contribution Margin % = CALCULATE ( [Contribution Margin %], orders[black_friday_window] = "No" )
+
+// What-if: cap discounts (Modeling > New parameter > Numeric range: name "Discount Cap", 0 to 0.35, step 0.05, default 0.35).
+// Assumes sales volume is unchanged.
+Contribution at Discount Cap =
+SUMX (
+    orders,
+    IF (
+        orders[order_status] = "Delivered",
+        orders[units] * orders[unit_price] * ( 1 - MIN ( orders[discount], SELECTEDVALUE ( 'Discount Cap'[Discount Cap], 0.35 ) ) )
+            - orders[cogs] - orders[delivery_cost],
+        orders[contribution]
+    )
+)
+
+Uplift from Cap = [Contribution at Discount Cap] - [Contribution]
+
+// ---------- Formatting helper ----------
+Margin Colour = IF ( [Contribution Margin %] < 0, "#C0392B", IF ( [Contribution Margin %] < 0.1, "#E9C46A", "#2A9D8F" ) )
