@@ -10,8 +10,8 @@
 //   DateTable[Date]           -> marketing_spend[month]
 //   DateTable[Date]           -> funnel[month]
 //   price_index[month]        -> orders[Month]   (calculated column below)
-//   Channels[Channel]         -> customers[acquisition_channel]
-//   Channels[Channel]         -> marketing_spend[channel]
+//   Channels[acquisition_channel] -> customers[acquisition_channel]
+//   Channels[acquisition_channel] -> marketing_spend[channel]
 // ============================================================
 
 // ---------- Calculated tables ----------
